@@ -1,5 +1,6 @@
 """LLM adapter. Providers take a system prompt and chat messages, return the reply text."""
 import os
+import re
 from typing import Protocol
 
 import anthropic
@@ -29,6 +30,10 @@ class AnthropicProvider:
             )
         except anthropic.AnthropicError as e:
             raise LLMError(f"Claude request failed: {e}") from e
+        except TypeError as e:  # the SDK raises a bare TypeError when no credentials are configured
+            if "authentication method" not in str(e):
+                raise
+            raise LLMError("No API key found. Put it in LLM_API_KEY in .env, then restart the backend.") from e
         if r.stop_reason == "refusal":
             raise LLMError("The model declined to answer this one.")
         text = "".join(b.text for b in r.content if b.type == "text")  # skips thinking blocks
@@ -51,7 +56,8 @@ class OpenAICompatProvider:
         try:
             r = self.client.post(self.url, json=body, headers=self.headers)
             r.raise_for_status()
-            return r.json()["choices"][0]["message"]["content"]
+            text = r.json()["choices"][0]["message"]["content"]
+            return re.sub(r"<think>.*?</think>", "", text, flags=re.S)  # Qwen3 reasoning, not part of the answer
         except (httpx.HTTPError, KeyError, IndexError, ValueError) as e:
             raise LLMError(f"LLM request failed: {e}") from e
 

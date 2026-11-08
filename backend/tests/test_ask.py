@@ -158,3 +158,25 @@ def test_anthropic_refusal_and_empty_are_errors():
         c, _ = stub_claude(content, stop)
         with pytest.raises(LLMError):
             AnthropicProvider("m", client=c).complete("s", [])
+
+
+def test_anthropic_without_credentials_says_what_to_do():
+    def create(**kw):  # what the SDK raises when no key is configured
+        raise TypeError("Could not resolve authentication method. Expected one of api_key, auth_token, or credentials to be set.")
+
+    with pytest.raises(LLMError, match="LLM_API_KEY"):
+        AnthropicProvider("m", client=NS(messages=NS(create=create))).complete("s", [])
+
+
+def test_anthropic_other_typeerrors_are_not_hidden():
+    def create(**kw):
+        raise TypeError("a real bug")
+
+    with pytest.raises(TypeError):
+        AnthropicProvider("m", client=NS(messages=NS(create=create))).complete("s", [])
+
+
+def test_openai_compat_drops_qwen_think_blocks():
+    body = {"choices": [{"message": {"content": '<think>maybe {"text": "x"} first</think>\n{"anchor_quote": "", "text": "why?"}'}}]}
+    p = OpenAICompatProvider("m", "http://x", client=httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(200, json=body))))
+    assert parse_reply(p.complete("s", [])).text == "why?"

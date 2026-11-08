@@ -20,9 +20,10 @@ class Fake:
 
     def complete(self, system, messages):
         self.calls.append((system, messages))
-        if isinstance(self.reply, Exception):
-            raise self.reply
-        return self.reply
+        r = self.reply.pop(0) if isinstance(self.reply, list) else self.reply  # a list answers one call at a time
+        if isinstance(r, Exception):
+            raise r
+        return r
 
 
 @pytest.fixture
@@ -55,7 +56,7 @@ def test_parse_reply_handles_fences_and_junk():
     assert parse_reply(ok).text == "why?"
     assert parse_reply("no json here") is None
     assert parse_reply('{"anchor_quote": "x"}') is None  # no text
-    assert parse_reply('{"text": "  "}') is None
+    assert parse_reply('{"text": "  "}').text.strip() == ""  # ask() decides what blank means
 
 
 # ---- endpoint ----
@@ -180,3 +181,116 @@ def test_openai_compat_drops_qwen_think_blocks():
     body = {"choices": [{"message": {"content": '<think>maybe {"text": "x"} first</think>\n{"anchor_quote": "", "text": "why?"}'}}]}
     p = OpenAICompatProvider("m", "http://x", client=httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(200, json=body))))
     assert parse_reply(p.complete("s", [])).text == "why?"
+
+
+# ---- milestone 3: modes, idle trigger, replies, thread status ----
+
+Q = '{"anchor_quote": "Nobody reads them.", "text": "How do you know?"}'
+
+
+def start_thread(client):
+    nid = note_with(client, "We drop emails. Nobody reads them.")
+    use(Fake(Q))
+    tid = client.post(f"/api/notes/{nid}/ask", json={}).json()["id"]
+    return nid, tid
+
+
+def test_note_mode_patch_and_bad_values(client):
+    nid = client.post("/api/notes", json={}).json()["id"]
+    assert client.get(f"/api/notes/{nid}").json()["mode"] == "reads_along"
+    assert client.patch(f"/api/notes/{nid}", json={"mode": "on_request"}).json()["mode"] == "on_request"
+    assert client.patch(f"/api/notes/{nid}", json={"mode": "nope"}).status_code == 422
+    # a null title or mode must not wipe the column (they are NOT NULL)
+    assert client.patch(f"/api/notes/{nid}", json={"title": None, "mode": None}).status_code == 200
+
+
+def test_idle_is_rejected_when_note_waits_to_be_asked(client):
+    nid = note_with(client, "Some claim.")
+    client.patch(f"/api/notes/{nid}", json={"mode": "on_request"})
+    fake = Fake(Q)
+    use(fake)
+    assert client.post(f"/api/notes/{nid}/ask", json={"trigger": "idle"}).status_code == 409
+    assert fake.calls == []  # the model was never called
+    assert client.post(f"/api/notes/{nid}/ask", json={}).status_code == 201  # explicit ask still works
+
+
+def test_idle_speaks_up_and_knows_what_was_raised(client):
+    nid, _ = start_thread(client)
+    fake = Fake(["YES", '{"anchor_quote": "", "text": "Second point?"}'])
+    use(fake)
+    r = client.post(f"/api/notes/{nid}/ask", json={"trigger": "idle"})
+    assert r.status_code == 201
+    system, msgs = fake.calls[1]  # call 0 is the yes/no gate
+    assert "without being asked" in system
+    assert "Already raised" in msgs[0]["content"] and "Nobody reads them." in msgs[0]["content"]
+
+
+def test_idle_can_stay_quiet_but_explicit_ask_cannot(client):
+    nid = note_with(client, "All fine here.")
+    use(Fake(["YES", '{"anchor_quote": "", "text": ""}']))  # gate says speak, model has nothing
+    assert client.post(f"/api/notes/{nid}/ask", json={"trigger": "idle"}).status_code == 204
+    assert client.get(f"/api/notes/{nid}/threads").json() == []
+    use(Fake('{"anchor_quote": "", "text": ""}'))  # same reply, but asked by hand: not allowed to be empty
+    assert client.post(f"/api/notes/{nid}/ask", json={}).status_code == 502
+
+
+def test_idle_on_empty_note_skips_the_model(client):
+    nid = client.post("/api/notes", json={}).json()["id"]
+    fake = Fake(Q)
+    use(fake)
+    assert client.post(f"/api/notes/{nid}/ask", json={"trigger": "idle"}).status_code == 204
+    assert fake.calls == []
+
+
+def test_reply_continues_the_thread(client):
+    _, tid = start_thread(client)
+    fake = Fake("Fair. What would change your mind?")
+    use(fake)
+    t = client.post(f"/api/threads/{tid}/reply", json={"text": "  Our open rate is 30%. "}).json()
+    assert [(m["role"], m["text"]) for m in t["messages"]][1:] == [("user", "Our open rate is 30%."), ("ai", "Fair. What would change your mind?")]
+    roles = [m["role"] for m in fake.calls[0][1]]
+    assert roles == ["user", "assistant", "user"]  # providers need alternating turns
+
+
+def test_failed_reply_saves_nothing(client):
+    _, tid = start_thread(client)
+    use(Fake(LLMError("down")))
+    assert client.post(f"/api/threads/{tid}/reply", json={"text": "hi"}).status_code == 502
+    use(Fake("ok"))
+    assert len(client.post(f"/api/threads/{tid}/reply", json={"text": "hi"}).json()["messages"]) == 3  # 1 + the retry only
+
+
+def test_reply_validation_and_closed_thread(client):
+    _, tid = start_thread(client)
+    use(Fake("ok"))
+    assert client.post(f"/api/threads/{tid}/reply", json={"text": "   "}).status_code == 400
+    assert client.post(f"/api/threads/{tid}/reply", json={"text": "x" * 4001}).status_code == 400
+    client.patch(f"/api/threads/{tid}", json={"status": "resolved"})
+    assert client.post(f"/api/threads/{tid}/reply", json={"text": "hi"}).status_code == 409
+    assert client.post("/api/threads/999/reply", json={"text": "hi"}).status_code == 404
+
+
+def test_resolve_reopen_dismiss(client):
+    nid, tid = start_thread(client)
+    assert client.patch(f"/api/threads/{tid}", json={"status": "resolved"}).json()["status"] == "resolved"
+    assert [t["status"] for t in client.get(f"/api/notes/{nid}/threads").json()] == ["resolved"]  # still listed
+    client.patch(f"/api/threads/{tid}", json={"status": "open"})
+    assert client.patch(f"/api/threads/{tid}", json={"status": "bogus"}).status_code == 422
+    client.patch(f"/api/threads/{tid}", json={"status": "dismissed"})
+    assert client.get(f"/api/notes/{nid}/threads").json() == []
+
+
+def test_idle_gate_no_means_one_cheap_call_and_silence(client):
+    nid = note_with(client, "Had pasta for dinner.")
+    fake = Fake(["no", Q])
+    use(fake)
+    assert client.post(f"/api/notes/{nid}/ask", json={"trigger": "idle"}).status_code == 204
+    assert len(fake.calls) == 1
+    assert client.post(f"/api/notes/{nid}/ask", json={}).status_code == 201  # asking by hand skips the gate
+
+
+def test_idle_never_repeats_a_raised_point(client):
+    nid, _ = start_thread(client)  # raised "Nobody reads them."
+    use(Fake(["YES", '{"anchor_quote": "Nobody reads them.", "text": "Again?"}']))
+    assert client.post(f"/api/notes/{nid}/ask", json={"trigger": "idle"}).status_code == 204
+    assert len(client.get(f"/api/notes/{nid}/threads").json()) == 1

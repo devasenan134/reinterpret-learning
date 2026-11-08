@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
-import { api, ApiError, type Folder, type Note, type Status, type Thread } from './api'
+import { api, ApiError, type Folder, type Mode, type Note, type Status, type Thread, type ThreadStatus } from './api'
 import Editor from './Editor'
 import Margin from './Margin'
+import ModePicker from './ModePicker'
 import Palette from './Palette'
 import Sidebar from './Sidebar'
 
@@ -15,11 +16,13 @@ export default function App() {
   const [status, setStatus] = useState<Status>('saved')
   const [error, setError] = useState('')
   const [th, setTh] = useState<{ id: number; list: Thread[] }>({ id: 0, list: [] })
-  const [asking, setAsking] = useState(false)
+  const [asking, setAsking] = useState<'ask' | 'idle' | null>(null)
+  const [writingOnly, setWritingOnly] = useState(false)
   const threads = th.id === activeId ? th.list : [] // never show another note's margin
 
+  const errMsg = (e: unknown) => (e instanceof ApiError && e.detail) || 'Could not reach the server.'
   const guard = async (fn: () => Promise<void>) => {
-    try { setError(''); await fn() } catch (e) { setError((e instanceof ApiError && e.detail) || 'Could not reach the server.') }
+    try { setError(''); await fn() } catch (e) { setError(errMsg(e)) }
   }
 
   useEffect(() => {
@@ -42,6 +45,7 @@ export default function App() {
   useEffect(() => {
     const k = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') { e.preventDefault(); setPalette(true) }
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.code === 'Period') { e.preventDefault(); setWritingOnly((v) => !v) }
     }
     window.addEventListener('keydown', k)
     return () => window.removeEventListener('keydown', k)
@@ -52,19 +56,44 @@ export default function App() {
     setNotes((l) => [n, ...l]); setNote(n); setActiveId(n.id); setPalette(false)
   })
 
-  const ask = (selection?: string) => {
+  const ask = async (selection?: string, trigger: 'ask' | 'idle' = 'ask') => {
     if (activeId === null || asking) return
     const id = activeId
-    setAsking(true)
-    guard(async () => {
-      try {
-        const t = await api.ask(id, selection)
-        setTh((s) => (s.id === id ? { id, list: [...s.list, t] } : s))
-      } finally {
-        setAsking(false)
-      }
-    })
+    setAsking(trigger)
+    try {
+      setError('')
+      const t = await api.ask(id, selection, trigger)
+      if (t) setTh((s) => (s.id === id ? { id, list: [...s.list, t] } : s))
+    } catch (e) {
+      if (trigger === 'ask') setError(errMsg(e)) // background (idle) failures stay silent
+    } finally {
+      setAsking(null)
+    }
   }
+
+  const reply = async (t: Thread, text: string) => {
+    try {
+      setError('')
+      const u = await api.reply(t.id, text)
+      setTh((s) => ({ ...s, list: s.list.map((x) => (x.id === u.id ? u : x)) }))
+      return true
+    } catch (e) {
+      setError(errMsg(e))
+      return false
+    }
+  }
+
+  const changeThread = (t: Thread, status: ThreadStatus) => guard(async () => {
+    const u = await api.patchThread(t.id, status)
+    setTh((s) => ({ ...s, list: status === 'dismissed' ? s.list.filter((x) => x.id !== t.id) : s.list.map((x) => (x.id === t.id ? u : x)) }))
+  })
+
+  const setMode = (mode: Mode) => note && guard(async () => {
+    const n = await api.patchNote(note.id, { mode })
+    setNote((p) => p && { ...p, mode: n.mode })
+  })
+
+  const mode: Mode = note?.mode ?? 'reads_along'
 
   return (
     <div className={'app' + (open ? ' side-open' : '')}>
@@ -75,6 +104,7 @@ export default function App() {
       {open && (
         <Sidebar
           notes={notes} folders={folders} activeId={activeId} status={status}
+          writingOnly={writingOnly} onWritingOnly={() => setWritingOnly((v) => !v)}
           onOpen={setActiveId}
           onNew={(f) => newNote('', f ?? null)}
           onSearch={() => setPalette(true)}
@@ -107,13 +137,17 @@ export default function App() {
         />
       )}
       <main className="page">
-        <Margin threads={threads} asking={asking} />
+        {!writingOnly && <Margin threads={threads} thinking={asking === 'ask'} onReply={reply} onStatus={changeThread} />}
         <div className="col">
+          {note && note.id === activeId && (
+            <div className="bar"><ModePicker mode={mode} onChange={setMode} /></div>
+          )}
           {note && note.id === activeId ? (
             <Editor
               key={note.id}
               note={note}
-              busy={asking}
+              busy={asking !== null}
+              idle={mode === 'reads_along' && !writingOnly}
               onAsk={ask}
               onStatus={setStatus}
               onSaved={(n) => setNotes((l) => l.map((x) => (x.id === n.id ? { ...x, title: n.title, updated_at: n.updated_at } : x)))}

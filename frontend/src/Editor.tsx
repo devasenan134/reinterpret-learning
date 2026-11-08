@@ -18,11 +18,13 @@ function parse(s?: string) {
   }
 }
 
-type Props = { note: Note; busy: boolean; onStatus: (s: Status) => void; onSaved: (n: Note) => void; onAsk: (selection?: string) => void }
+type Props = { note: Note; busy: boolean; idle: boolean; onStatus: (s: Status) => void; onSaved: (n: Note) => void; onAsk: (selection?: string, trigger?: 'ask' | 'idle') => void }
 
-export default function Editor({ note, busy, onStatus, onSaved, onAsk }: Props) {
+export default function Editor({ note, busy, idle, onStatus, onSaved, onAsk }: Props) {
   const pending = useRef<Partial<Pick<Note, 'title' | 'body_json'>>>({})
   const timer = useRef<number>(undefined)
+  const idleTimer = useRef<number>(undefined)
+  const lastIdleText = useRef('')
 
   const flush = async (): Promise<boolean> => {
     clearTimeout(timer.current)
@@ -54,7 +56,11 @@ export default function Editor({ note, busy, onStatus, onSaved, onAsk }: Props) 
   const editor = useEditor({
     extensions: [StarterKit, TextStyle, Color, Slash, Placeholder.configure({ placeholder: "Write anything. Type '/' for blocks." })],
     content: parse(note.body_json),
-    onUpdate: ({ editor }) => queue({ body_json: JSON.stringify(editor.getJSON()) }),
+    onUpdate: ({ editor }) => {
+      queue({ body_json: JSON.stringify(editor.getJSON()) })
+      clearTimeout(idleTimer.current)
+      idleTimer.current = window.setTimeout(() => void idleRef.current(), 3000) // reading pace: a moment after you stop typing
+    },
     editorProps: {
       handleKeyDown: (_v, e) => {
         if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
@@ -73,10 +79,22 @@ export default function Editor({ note, busy, onStatus, onSaved, onAsk }: Props) 
     const { from, to } = editor.state.selection
     onAsk(from === to ? undefined : editor.state.doc.textBetween(from, to, ' '))
   }
+  // "Reads along": after a pause, if the text changed since last time, let it speak up (it may stay quiet)
+  const onIdle = async () => {
+    if (!editor || !idle || busy) return
+    const text = editor.getText()
+    if (text.trim().length < 40 || text === lastIdleText.current) return
+    if (!(await flush())) return
+    lastIdleText.current = text
+    onAsk(undefined, 'idle')
+  }
   const questionRef = useRef(question)
+  const idleRef = useRef(onIdle)
   useEffect(() => {
     questionRef.current = question
+    idleRef.current = onIdle
   })
+  useEffect(() => () => clearTimeout(idleTimer.current), [])
 
   const b = (label: string, active: boolean, run: () => void, title?: string) => (
     <button key={label} className={active ? 'on' : ''} title={title ?? label} onMouseDown={(e) => { e.preventDefault(); run() }}>{label}</button>

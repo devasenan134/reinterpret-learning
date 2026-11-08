@@ -6,6 +6,8 @@ type Props = {
   folders: Folder[]
   activeId: number | null
   status: Status
+  writingOnly: boolean
+  onWritingOnly: () => void
   onOpen: (id: number) => void
   onNew: (folderId?: number | null) => void
   onSearch: () => void
@@ -70,6 +72,7 @@ export default function Sidebar(p: Props) {
           <button className="side-btn muted" onClick={() => setNaming(true)}>New folder</button>
         )}
       </div>
+      <button className="side-btn" onClick={p.onWritingOnly}>Writing only {p.writingOnly ? '✓' : <kbd>⌘⇧.</kbd>}</button>
       <div className={'status ' + p.status}>{STATUS[p.status]}</div>
     </aside>
   )

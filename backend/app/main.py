@@ -1,12 +1,13 @@
 from contextlib import asynccontextmanager
-from typing import Optional
+from typing import Literal, Optional
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Response
 from pydantic import BaseModel
 
-from .db import connect, seed
+from .db import DEFAULT_MODE, connect, seed
 from .llm import LLMError, get_provider
 from .respond import ask, note_text
+from .respond import reply as llm_reply
 
 
 def get_db():
@@ -40,6 +41,7 @@ class NotePatch(BaseModel):
     title: Optional[str] = None
     body_json: Optional[str] = None
     folder_id: Optional[int] = None
+    mode: Optional[Literal["reads_along", "on_request"]] = None
 
 
 class NoteNew(BaseModel):
@@ -64,7 +66,7 @@ def list_notes(db=Depends(get_db)):
 
 @app.post("/api/notes", status_code=201)
 def create_note(body: NoteNew, db=Depends(get_db)):
-    cur = db.execute("INSERT INTO notes (title, folder_id) VALUES (?, ?)", (body.title, body.folder_id))
+    cur = db.execute("INSERT INTO notes (title, folder_id, mode) VALUES (?, ?, ?)", (body.title, body.folder_id, DEFAULT_MODE))
     db.commit()
     return _note(db, cur.lastrowid)
 
@@ -77,7 +79,8 @@ def get_note(note_id: int, db=Depends(get_db)):
 @app.patch("/api/notes/{note_id}")
 def patch_note(note_id: int, body: NotePatch, db=Depends(get_db)):
     _note(db, note_id)
-    fields = body.model_dump(exclude_unset=True)
+    # only folder_id may be set to null; a null title/body/mode would break a NOT NULL column
+    fields = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None or k == "folder_id"}
     if fields:
         cols = ", ".join(f"{k} = ?" for k in fields)  # keys come from the model, not the client
         db.execute(
@@ -138,7 +141,10 @@ def delete_folder(folder_id: int, db=Depends(get_db)):
 # ---- threads (the AI's margin notes) ----
 
 def _thread(db, thread_id: int):
-    t = dict(db.execute("SELECT * FROM threads WHERE id = ?", (thread_id,)).fetchone())
+    row = db.execute("SELECT * FROM threads WHERE id = ?", (thread_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "thread not found")
+    t = dict(row)
     t["messages"] = [dict(m) for m in db.execute("SELECT * FROM messages WHERE thread_id = ? ORDER BY id", (thread_id,))]
     return t
 
@@ -152,6 +158,7 @@ def list_threads(note_id: int, db=Depends(get_db)):
 
 class AskIn(BaseModel):
     selection: Optional[str] = None
+    trigger: Literal["ask", "idle"] = "ask"
 
 
 def get_llm():
@@ -164,14 +171,22 @@ def get_llm():
 @app.post("/api/notes/{note_id}/ask", status_code=201)
 def ask_note(note_id: int, body: AskIn, db=Depends(get_db), llm=Depends(get_llm)):
     note = _note(db, note_id)
+    idle = body.trigger == "idle"
+    if idle and note["mode"] == "on_request":  # enforced here, not only in the UI
+        raise HTTPException(409, "This note is set to On request.")
     text = note_text(note["body_json"])
     selection = (body.selection or "").strip() or None
     if not text and not selection:
+        if idle:
+            return Response(status_code=204)
         raise HTTPException(400, "Write something first.")
+    raised = tuple(r["anchor_quote"] for r in db.execute("SELECT anchor_quote FROM threads WHERE note_id = ?", (note_id,)))
     try:
-        reply = ask(llm, note["title"], text, selection)
+        reply = ask(llm, note["title"], text, selection, idle, raised)
     except LLMError as e:
         raise HTTPException(502, str(e))
+    if reply is None:
+        return Response(status_code=204)
     cur = db.execute("INSERT INTO threads (note_id, anchor_quote) VALUES (?, ?)", (note_id, reply.anchor_quote))
     db.execute(
         "INSERT INTO messages (thread_id, role, kind, text) VALUES (?, 'ai', 'question', ?)",
@@ -179,3 +194,40 @@ def ask_note(note_id: int, body: AskIn, db=Depends(get_db), llm=Depends(get_llm)
     )
     db.commit()
     return _thread(db, cur.lastrowid)
+
+
+class ReplyIn(BaseModel):
+    text: str
+
+
+@app.post("/api/threads/{thread_id}/reply")
+def reply_thread(thread_id: int, body: ReplyIn, db=Depends(get_db), llm=Depends(get_llm)):
+    t = _thread(db, thread_id)
+    text = body.text.strip()
+    if not text:
+        raise HTTPException(400, "Write a reply first.")
+    if len(text) > 4000:
+        raise HTTPException(400, "That reply is too long.")
+    if t["status"] != "open":
+        raise HTTPException(409, "This thread is closed. Reopen it to reply.")
+    note = _note(db, t["note_id"])
+    try:
+        answer = llm_reply(llm, note["title"], note_text(note["body_json"]), t["anchor_quote"], [*t["messages"], {"role": "user", "text": text}])
+    except LLMError as e:
+        raise HTTPException(502, str(e))  # nothing saved, so the user can send the same text again
+    db.execute("INSERT INTO messages (thread_id, role, kind, text) VALUES (?, 'user', 'text', ?)", (thread_id, text))
+    db.execute("INSERT INTO messages (thread_id, role, kind, text) VALUES (?, 'ai', 'text', ?)", (thread_id, answer))
+    db.commit()
+    return _thread(db, thread_id)
+
+
+class ThreadPatch(BaseModel):
+    status: Literal["open", "resolved", "dismissed"]
+
+
+@app.patch("/api/threads/{thread_id}")
+def patch_thread(thread_id: int, body: ThreadPatch, db=Depends(get_db)):
+    _thread(db, thread_id)
+    db.execute("UPDATE threads SET status = ? WHERE id = ?", (body.status, thread_id))
+    db.commit()
+    return _thread(db, thread_id)

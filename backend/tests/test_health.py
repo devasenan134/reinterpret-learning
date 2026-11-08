@@ -13,3 +13,4 @@ def test_schema_has_core_tables(tmp_path):
     conn = connect(str(tmp_path / "t.db"))
     names = {r["name"] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     assert {"folders", "lenses", "notes", "threads", "messages", "settings"} <= names
+

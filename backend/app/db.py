@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS notes (
   lens_id INTEGER REFERENCES lenses(id) ON DELETE SET NULL, -- NULL = the default voice
   title TEXT NOT NULL DEFAULT '',
   body_json TEXT NOT NULL DEFAULT '{}',
-  mode TEXT NOT NULL DEFAULT 'reads_along',  -- reads_along | on_request
+  mode TEXT NOT NULL DEFAULT 'reads_along',      -- reads_along | on_request
   instructions TEXT NOT NULL DEFAULT '',          -- the note brief
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -48,6 +48,9 @@ CREATE TABLE IF NOT EXISTS settings (
 """
 
 
+DEFAULT_MODE = "reads_along"  # passed on insert too: an older database file keeps its old column default
+
+
 def connect(path: str | None = None) -> sqlite3.Connection:
     conn = sqlite3.connect(path or os.environ.get("DB_PATH", "reinterpret.db"), check_same_thread=False)  # one request uses it at a time
     conn.row_factory = sqlite3.Row
@@ -71,7 +74,7 @@ def seed(conn: sqlite3.Connection) -> None:
     if conn.execute("SELECT 1 FROM notes LIMIT 1").fetchone():
         return
     conn.execute(
-        "INSERT INTO notes (title, body_json) VALUES (?, ?)",
-        ("Welcome to Reinterpret", json.dumps(WELCOME)),
+        "INSERT INTO notes (title, body_json, mode) VALUES (?, ?, ?)",
+        ("Welcome to Reinterpret", json.dumps(WELCOME), DEFAULT_MODE),
     )
     conn.commit()

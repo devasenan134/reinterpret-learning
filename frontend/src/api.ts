@@ -1,7 +1,9 @@
-export type Note = { id: number; title: string; folder_id: number | null; updated_at: string; body_json?: string }
+export type Mode = 'reads_along' | 'on_request'
+export type Note = { id: number; title: string; folder_id: number | null; updated_at: string; body_json?: string; mode?: Mode }
 export type Folder = { id: number; name: string }
 export type Message = { id: number; role: string; kind: string; text: string }
-export type Thread = { id: number; anchor_quote: string; status: string; messages: Message[] }
+export type ThreadStatus = 'open' | 'resolved' | 'dismissed'
+export type Thread = { id: number; anchor_quote: string; status: ThreadStatus; messages: Message[] }
 export class ApiError extends Error {
   detail?: string
 }
@@ -26,10 +28,13 @@ export const api = {
   notes: (): Promise<Note[]> => send('GET', '/api/notes'),
   note: (id: number): Promise<Note> => send('GET', `/api/notes/${id}`),
   newNote: (title = '', folder_id: number | null = null): Promise<Note> => send('POST', '/api/notes', { title, folder_id }),
-  patchNote: (id: number, p: Partial<Pick<Note, 'title' | 'body_json' | 'folder_id'>>): Promise<Note> => send('PATCH', `/api/notes/${id}`, p),
+  patchNote: (id: number, p: Partial<Pick<Note, 'title' | 'body_json' | 'folder_id' | 'mode'>>): Promise<Note> => send('PATCH', `/api/notes/${id}`, p),
   deleteNote: (id: number) => send('DELETE', `/api/notes/${id}`),
   threads: (id: number): Promise<Thread[]> => send('GET', `/api/notes/${id}/threads`),
-  ask: (id: number, selection?: string): Promise<Thread> => send('POST', `/api/notes/${id}/ask`, { selection }),
+  // null = the model chose to stay quiet (idle only)
+  ask: (id: number, selection?: string, trigger: 'ask' | 'idle' = 'ask'): Promise<Thread | null> => send('POST', `/api/notes/${id}/ask`, { selection, trigger }),
+  reply: (id: number, text: string): Promise<Thread> => send('POST', `/api/threads/${id}/reply`, { text }),
+  patchThread: (id: number, status: ThreadStatus): Promise<Thread> => send('PATCH', `/api/threads/${id}`, { status }),
   folders: (): Promise<Folder[]> => send('GET', '/api/folders'),
   newFolder: (name: string): Promise<Folder> => send('POST', '/api/folders', { name }),
   renameFolder: (id: number, name: string): Promise<Folder> => send('PATCH', `/api/folders/${id}`, { name }),

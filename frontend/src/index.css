@@ -88,3 +88,20 @@ kbd { font: 12px var(--sans); color: var(--muted); }
   .margin { width: auto; padding: 0; margin: 0 auto 28px; max-width: 680px; }
   .col { max-width: 680px; margin: 0 auto; }
 }
+
+.bar { margin-bottom: 14px; font-size: 14px; color: var(--muted); }
+.mode { position: relative; display: inline-block; }
+.mode-btn { padding: 4px 8px; margin-left: -8px; border-radius: 8px; color: var(--muted); }
+.mode-btn:hover { background: var(--panel); }
+.mode-scrim { position: fixed; inset: 0; z-index: 8; }
+.mode-menu { position: absolute; top: 100%; left: 0; z-index: 9; width: 320px; padding: 6px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 8px 30px #0008; }
+.mode-menu button { display: block; width: 100%; text-align: left; padding: 8px 10px; border-radius: 8px; }
+.mode-menu button.on { background: #262626; }
+.mode-menu b { display: block; font-weight: 500; color: var(--text); }
+.mode-menu small { color: var(--muted); font-size: 13px; line-height: 1.4; }
+.thread p.mine { font-family: var(--sans); font-size: 15px; color: var(--muted); }
+.thread.resolved { opacity: .5; }
+.write-back { width: 100%; padding: 6px 0; margin-top: 4px; background: none; border: 0; border-bottom: 1px solid var(--line); outline: none; font: 15px var(--sans); }
+.write-back:focus { border-color: var(--muted); }
+.thread-actions { display: flex; gap: 14px; margin-top: 8px; font: 13px var(--sans); color: var(--muted); }
+.thread-actions button:hover { color: var(--text); }

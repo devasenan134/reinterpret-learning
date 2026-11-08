@@ -5,6 +5,8 @@ from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel
 
 from .db import connect, seed
+from .llm import LLMError, get_provider
+from .respond import ask, note_text
 
 
 def get_db():
@@ -131,3 +133,49 @@ def delete_folder(folder_id: int, db=Depends(get_db)):
     _folder(db, folder_id)
     db.execute("DELETE FROM folders WHERE id = ?", (folder_id,))  # notes fall out of the folder, not deleted
     db.commit()
+
+
+# ---- threads (the AI's margin notes) ----
+
+def _thread(db, thread_id: int):
+    t = dict(db.execute("SELECT * FROM threads WHERE id = ?", (thread_id,)).fetchone())
+    t["messages"] = [dict(m) for m in db.execute("SELECT * FROM messages WHERE thread_id = ? ORDER BY id", (thread_id,))]
+    return t
+
+
+@app.get("/api/notes/{note_id}/threads")
+def list_threads(note_id: int, db=Depends(get_db)):
+    _note(db, note_id)
+    ids = db.execute("SELECT id FROM threads WHERE note_id = ? AND status != 'dismissed' ORDER BY id", (note_id,))
+    return [_thread(db, r["id"]) for r in ids.fetchall()]
+
+
+class AskIn(BaseModel):
+    selection: Optional[str] = None
+
+
+def get_llm():
+    try:
+        return get_provider()
+    except LLMError as e:
+        raise HTTPException(503, str(e))
+
+
+@app.post("/api/notes/{note_id}/ask", status_code=201)
+def ask_note(note_id: int, body: AskIn, db=Depends(get_db), llm=Depends(get_llm)):
+    note = _note(db, note_id)
+    text = note_text(note["body_json"])
+    selection = (body.selection or "").strip() or None
+    if not text and not selection:
+        raise HTTPException(400, "Write something first.")
+    try:
+        reply = ask(llm, note["title"], text, selection)
+    except LLMError as e:
+        raise HTTPException(502, str(e))
+    cur = db.execute("INSERT INTO threads (note_id, anchor_quote) VALUES (?, ?)", (note_id, reply.anchor_quote))
+    db.execute(
+        "INSERT INTO messages (thread_id, role, kind, text) VALUES (?, 'ai', 'question', ?)",
+        (cur.lastrowid, reply.text),
+    )
+    db.commit()
+    return _thread(db, cur.lastrowid)

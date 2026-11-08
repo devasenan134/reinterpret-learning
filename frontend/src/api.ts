@@ -1,5 +1,10 @@
 export type Note = { id: number; title: string; folder_id: number | null; updated_at: string; body_json?: string }
 export type Folder = { id: number; name: string }
+export type Message = { id: number; role: string; kind: string; text: string }
+export type Thread = { id: number; anchor_quote: string; status: string; messages: Message[] }
+export class ApiError extends Error {
+  detail?: string
+}
 export type Status = 'saved' | 'saving' | 'error'
 
 async function send(method: string, url: string, body?: unknown) {
@@ -8,7 +13,12 @@ async function send(method: string, url: string, body?: unknown) {
     headers: { 'content-type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
   })
-  if (!r.ok) throw new Error(`${method} ${url}: ${r.status}`)
+  if (!r.ok) {
+    const d = await r.json().catch(() => null)
+    const e = new ApiError(`${method} ${url}: ${r.status}`)
+    if (typeof d?.detail === 'string') e.detail = d.detail // our own messages, safe to show
+    throw e
+  }
   return r.status === 204 ? null : r.json()
 }
 
@@ -18,6 +28,8 @@ export const api = {
   newNote: (title = '', folder_id: number | null = null): Promise<Note> => send('POST', '/api/notes', { title, folder_id }),
   patchNote: (id: number, p: Partial<Pick<Note, 'title' | 'body_json' | 'folder_id'>>): Promise<Note> => send('PATCH', `/api/notes/${id}`, p),
   deleteNote: (id: number) => send('DELETE', `/api/notes/${id}`),
+  threads: (id: number): Promise<Thread[]> => send('GET', `/api/notes/${id}/threads`),
+  ask: (id: number, selection?: string): Promise<Thread> => send('POST', `/api/notes/${id}/ask`, { selection }),
   folders: (): Promise<Folder[]> => send('GET', '/api/folders'),
   newFolder: (name: string): Promise<Folder> => send('POST', '/api/folders', { name }),
   renameFolder: (id: number, name: string): Promise<Folder> => send('PATCH', `/api/folders/${id}`, { name }),

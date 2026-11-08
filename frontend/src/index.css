@@ -74,3 +74,17 @@ kbd { font: 12px var(--sans); color: var(--muted); }
 .palette button.on { background: #262626; }
 
 .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: #3a1d1b; border: 1px solid #6a2e2a; padding: 8px 16px; border-radius: 10px; font-size: 14px; z-index: 40; }
+
+.margin { grid-column: 1; justify-self: end; width: min(100%, 320px); padding-right: 36px; font-family: var(--serif); font-size: 18px; line-height: 1.5; }
+.thread { margin-bottom: 28px; }
+.thread q { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; quotes: none; color: var(--muted); font-size: 14px; border-left: 2px solid var(--line); padding-left: 10px; margin-bottom: 8px; }
+.thread p { margin: 0 0 8px; }
+.thinking { color: var(--muted); font-style: italic; }
+.bubble .question { width: 100%; padding: 0 10px; text-align: left; font-family: var(--serif); font-size: 16px; color: var(--text); }
+.bubble .question:disabled { opacity: .5; }
+.bubble kbd { float: right; line-height: 30px; }
+@media (max-width: 1100px) {
+  .page { display: block; }
+  .margin { width: auto; padding: 0; margin: 0 auto 28px; max-width: 680px; }
+  .col { max-width: 680px; margin: 0 auto; }
+}

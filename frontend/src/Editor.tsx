@@ -18,23 +18,25 @@ function parse(s?: string) {
   }
 }
 
-type Props = { note: Note; onStatus: (s: Status) => void; onSaved: (n: Note) => void }
+type Props = { note: Note; busy: boolean; onStatus: (s: Status) => void; onSaved: (n: Note) => void; onAsk: (selection?: string) => void }
 
-export default function Editor({ note, onStatus, onSaved }: Props) {
+export default function Editor({ note, busy, onStatus, onSaved, onAsk }: Props) {
   const pending = useRef<Partial<Pick<Note, 'title' | 'body_json'>>>({})
   const timer = useRef<number>(undefined)
 
-  const flush = async () => {
+  const flush = async (): Promise<boolean> => {
     clearTimeout(timer.current)
     const p = pending.current
-    if (!Object.keys(p).length) return
+    if (!Object.keys(p).length) return true
     pending.current = {}
     try {
       onSaved(await api.patchNote(note.id, p))
       onStatus('saved')
+      return true
     } catch {
       pending.current = { ...p, ...pending.current } // keep it so the next edit retries
       onStatus('error')
+      return false
     }
   }
   const queue = (p: typeof pending.current) => {
@@ -53,6 +55,27 @@ export default function Editor({ note, onStatus, onSaved }: Props) {
     extensions: [StarterKit, TextStyle, Color, Slash, Placeholder.configure({ placeholder: "Write anything. Type '/' for blocks." })],
     content: parse(note.body_json),
     onUpdate: ({ editor }) => queue({ body_json: JSON.stringify(editor.getJSON()) }),
+    editorProps: {
+      handleKeyDown: (_v, e) => {
+        if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+          e.preventDefault()
+          void questionRef.current()
+          return true
+        }
+        return false
+      },
+    },
+  })
+
+  // the server reads the saved note, so save first; skip asking if saving failed
+  const question = async () => {
+    if (!editor || busy || !(await flush())) return
+    const { from, to } = editor.state.selection
+    onAsk(from === to ? undefined : editor.state.doc.textBetween(from, to, ' '))
+  }
+  const questionRef = useRef(question)
+  useEffect(() => {
+    questionRef.current = question
   })
 
   const b = (label: string, active: boolean, run: () => void, title?: string) => (
@@ -94,6 +117,11 @@ export default function Editor({ note, onStatus, onSaved }: Props) {
                 onMouseDown={(e) => { e.preventDefault(); const ch = editor.chain().focus(); if (c) ch.setColor(c).run(); else ch.unsetColor().run() }}
               >A</button>
             ))}
+          </div>
+          <div className="row">
+            <button className="question" disabled={busy} onMouseDown={(e) => { e.preventDefault(); void question() }}>
+              Question this <kbd>⌘↵</kbd>
+            </button>
           </div>
         </BubbleMenu>
       )}

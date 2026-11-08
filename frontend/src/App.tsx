@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
-import { api, type Folder, type Note, type Status } from './api'
+import { api, ApiError, type Folder, type Note, type Status, type Thread } from './api'
 import Editor from './Editor'
+import Margin from './Margin'
 import Palette from './Palette'
 import Sidebar from './Sidebar'
 
@@ -13,9 +14,12 @@ export default function App() {
   const [palette, setPalette] = useState(false)
   const [status, setStatus] = useState<Status>('saved')
   const [error, setError] = useState('')
+  const [th, setTh] = useState<{ id: number; list: Thread[] }>({ id: 0, list: [] })
+  const [asking, setAsking] = useState(false)
+  const threads = th.id === activeId ? th.list : [] // never show another note's margin
 
   const guard = async (fn: () => Promise<void>) => {
-    try { setError(''); await fn() } catch { setError('Could not reach the server.') }
+    try { setError(''); await fn() } catch (e) { setError((e instanceof ApiError && e.detail) || 'Could not reach the server.') }
   }
 
   useEffect(() => {
@@ -31,6 +35,11 @@ export default function App() {
   }, [activeId])
 
   useEffect(() => {
+    if (activeId === null) return
+    guard(async () => setTh({ id: activeId, list: await api.threads(activeId) }))
+  }, [activeId])
+
+  useEffect(() => {
     const k = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') { e.preventDefault(); setPalette(true) }
     }
@@ -42,6 +51,20 @@ export default function App() {
     const n = await api.newNote(title, folderId)
     setNotes((l) => [n, ...l]); setNote(n); setActiveId(n.id); setPalette(false)
   })
+
+  const ask = (selection?: string) => {
+    if (activeId === null || asking) return
+    const id = activeId
+    setAsking(true)
+    guard(async () => {
+      try {
+        const t = await api.ask(id, selection)
+        setTh((s) => (s.id === id ? { id, list: [...s.list, t] } : s))
+      } finally {
+        setAsking(false)
+      }
+    })
+  }
 
   return (
     <div className={'app' + (open ? ' side-open' : '')}>
@@ -84,11 +107,14 @@ export default function App() {
         />
       )}
       <main className="page">
+        <Margin threads={threads} asking={asking} />
         <div className="col">
           {note && note.id === activeId ? (
             <Editor
               key={note.id}
               note={note}
+              busy={asking}
+              onAsk={ask}
               onStatus={setStatus}
               onSaved={(n) => setNotes((l) => l.map((x) => (x.id === n.id ? { ...x, title: n.title, updated_at: n.updated_at } : x)))}
             />
@@ -98,7 +124,7 @@ export default function App() {
         </div>
       </main>
       {palette && <Palette notes={notes} onOpen={(id) => { setActiveId(id); setPalette(false) }} onStart={(t) => newNote(t)} onClose={() => setPalette(false)} />}
-      {error && <div className="toast">{error}</div>}
+      {error && <div className="toast" onClick={() => setError('')}>{error}</div>}
     </div>
   )
 }

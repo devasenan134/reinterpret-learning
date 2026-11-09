@@ -2,11 +2,11 @@ from contextlib import asynccontextmanager
 from typing import Literal, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from .db import DEFAULT_MODE, connect, seed
+from .db import connect, seed
 from .llm import LLMError, get_provider
-from .respond import ask, note_text
+from .respond import ask, explain, note_text
 from .respond import reply as llm_reply
 
 
@@ -35,6 +35,37 @@ def health():
     return {"ok": True}
 
 
+# ---- settings ----
+
+DEFAULTS = {"default_mode": "reads_along", "reading_pace": "3", "theme": "dark", "text_size": "16", "ai_font": "serif", "ai_color": ""}
+
+
+class SettingsPatch(BaseModel):
+    default_mode: Optional[Literal["reads_along", "on_request"]] = None
+    reading_pace: Optional[Literal["3", "6", "12"]] = None  # seconds of quiet before it speaks
+    theme: Optional[Literal["dark", "light"]] = None
+    text_size: Optional[Literal["15", "16", "18", "20"]] = None
+    ai_font: Optional[Literal["serif", "sans"]] = None
+    ai_color: Optional[Literal["", "#e9a35c", "#7fc58a", "#6fa8e8", "#b48ae8"]] = None
+
+
+def _settings(db) -> dict:
+    return {**DEFAULTS, **{r["key"]: r["value"] for r in db.execute("SELECT key, value FROM settings")}}
+
+
+@app.get("/api/settings")
+def get_settings(db=Depends(get_db)):
+    return _settings(db)
+
+
+@app.patch("/api/settings")
+def patch_settings(body: SettingsPatch, db=Depends(get_db)):
+    for k, v in body.model_dump(exclude_none=True).items():  # exclude_none keeps ai_color "" (it is not None)
+        db.execute("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", (k, v))
+    db.commit()
+    return _settings(db)
+
+
 # ---- notes ----
 
 class NotePatch(BaseModel):
@@ -42,6 +73,7 @@ class NotePatch(BaseModel):
     body_json: Optional[str] = None
     folder_id: Optional[int] = None
     mode: Optional[Literal["reads_along", "on_request"]] = None
+    instructions: Optional[str] = Field(None, max_length=1000)  # the note brief
 
 
 class NoteNew(BaseModel):
@@ -66,7 +98,7 @@ def list_notes(db=Depends(get_db)):
 
 @app.post("/api/notes", status_code=201)
 def create_note(body: NoteNew, db=Depends(get_db)):
-    cur = db.execute("INSERT INTO notes (title, folder_id, mode) VALUES (?, ?, ?)", (body.title, body.folder_id, DEFAULT_MODE))
+    cur = db.execute("INSERT INTO notes (title, folder_id, mode) VALUES (?, ?, ?)", (body.title, body.folder_id, _settings(db)["default_mode"]))
     db.commit()
     return _note(db, cur.lastrowid)
 
@@ -158,7 +190,7 @@ def list_threads(note_id: int, db=Depends(get_db)):
 
 class AskIn(BaseModel):
     selection: Optional[str] = None
-    trigger: Literal["ask", "idle"] = "ask"
+    trigger: Literal["ask", "idle", "explain"] = "ask"
 
 
 def get_llm():
@@ -176,13 +208,24 @@ def ask_note(note_id: int, body: AskIn, db=Depends(get_db), llm=Depends(get_llm)
         raise HTTPException(409, "This note is set to On request.")
     text = note_text(note["body_json"])
     selection = (body.selection or "").strip() or None
+    if body.trigger == "explain":
+        if not selection:
+            raise HTTPException(400, "Select some text to explain.")
+        try:
+            out = explain(llm, note["title"], text, selection, note["instructions"])
+        except LLMError as e:
+            raise HTTPException(502, str(e))
+        cur = db.execute("INSERT INTO threads (note_id, anchor_quote) VALUES (?, ?)", (note_id, selection))
+        db.execute("INSERT INTO messages (thread_id, role, kind, text) VALUES (?, 'ai', 'explanation', ?)", (cur.lastrowid, out))
+        db.commit()
+        return _thread(db, cur.lastrowid)
     if not text and not selection:
         if idle:
             return Response(status_code=204)
         raise HTTPException(400, "Write something first.")
     raised = tuple(r["anchor_quote"] for r in db.execute("SELECT anchor_quote FROM threads WHERE note_id = ?", (note_id,)))
     try:
-        reply = ask(llm, note["title"], text, selection, idle, raised)
+        reply = ask(llm, note["title"], text, selection, idle, raised, note["instructions"])
     except LLMError as e:
         raise HTTPException(502, str(e))
     if reply is None:
@@ -212,7 +255,7 @@ def reply_thread(thread_id: int, body: ReplyIn, db=Depends(get_db), llm=Depends(
         raise HTTPException(409, "This thread is closed. Reopen it to reply.")
     note = _note(db, t["note_id"])
     try:
-        answer = llm_reply(llm, note["title"], note_text(note["body_json"]), t["anchor_quote"], [*t["messages"], {"role": "user", "text": text}])
+        answer = llm_reply(llm, note["title"], note_text(note["body_json"]), t["anchor_quote"], [*t["messages"], {"role": "user", "text": text}], note["instructions"])
     except LLMError as e:
         raise HTTPException(502, str(e))  # nothing saved, so the user can send the same text again
     db.execute("INSERT INTO messages (thread_id, role, kind, text) VALUES (?, 'user', 'text', ?)", (thread_id, text))

@@ -294,3 +294,42 @@ def test_idle_never_repeats_a_raised_point(client):
     use(Fake(["YES", '{"anchor_quote": "Nobody reads them.", "text": "Again?"}']))
     assert client.post(f"/api/notes/{nid}/ask", json={"trigger": "idle"}).status_code == 204
     assert len(client.get(f"/api/notes/{nid}/threads").json()) == 1
+
+
+# ---- milestone 4: brief, explain, settings ----
+
+def test_brief_reaches_every_prompt(client):
+    nid = note_with(client, "Cats are mammals.")
+    client.patch(f"/api/notes/{nid}", json={"instructions": "Be harsh."})
+    f = Fake(['{"anchor_quote": "Cats", "text": "Why?"}', "ok", "A cat is a mammal."])
+    use(f)
+    t = client.post(f"/api/notes/{nid}/ask", json={}).json()
+    client.post(f"/api/threads/{t['id']}/reply", json={"text": "because"})
+    client.post(f"/api/notes/{nid}/ask", json={"trigger": "explain", "selection": "Cats"})
+    assert all("Be harsh." in system for system, _ in f.calls)
+    assert client.patch(f"/api/notes/{nid}", json={"instructions": "x" * 1001}).status_code == 422
+
+
+def test_explain_makes_a_thread_and_needs_a_selection(client):
+    nid = note_with(client, "Cats are mammals.")
+    use(Fake("A cat is a warm-blooded animal."))
+    assert client.post(f"/api/notes/{nid}/ask", json={"trigger": "explain"}).status_code == 400
+    t = client.post(f"/api/notes/{nid}/ask", json={"trigger": "explain", "selection": "mammals"}).json()
+    assert t["anchor_quote"] == "mammals" and t["messages"][0]["kind"] == "explanation"
+    use(Fake(LLMError("down")))
+    assert client.post(f"/api/notes/{nid}/ask", json={"trigger": "explain", "selection": "x"}).status_code == 502
+
+
+def test_explain_works_in_on_request_mode(client):
+    nid = note_with(client, "Cats.")
+    client.patch(f"/api/notes/{nid}", json={"mode": "on_request"})
+    use(Fake("fine"))
+    assert client.post(f"/api/notes/{nid}/ask", json={"trigger": "explain", "selection": "Cats"}).status_code == 201
+
+
+def test_settings_defaults_patch_and_default_mode(client):
+    assert client.get("/api/settings").json()["theme"] == "dark"
+    s = client.patch("/api/settings", json={"theme": "light", "ai_color": "", "default_mode": "on_request"}).json()
+    assert s["theme"] == "light" and s["default_mode"] == "on_request" and s["text_size"] == "16"
+    assert client.patch("/api/settings", json={"theme": "pink"}).status_code == 422
+    assert client.post("/api/notes", json={}).json()["mode"] == "on_request"  # new notes follow the setting

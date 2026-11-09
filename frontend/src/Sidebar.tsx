@@ -8,6 +8,7 @@ type Props = {
   status: Status
   writingOnly: boolean
   onWritingOnly: () => void
+  onSettings: () => void
   onOpen: (id: number) => void
   onNew: (folderId?: number | null) => void
   onSearch: () => void
@@ -73,6 +74,7 @@ export default function Sidebar(p: Props) {
         )}
       </div>
       <button className="side-btn" onClick={p.onWritingOnly}>Writing only {p.writingOnly ? '✓' : <kbd>⌘⇧.</kbd>}</button>
+      <button className="side-btn" onClick={p.onSettings}>Settings</button>
       <div className={'status ' + p.status}>{STATUS[p.status]}</div>
     </aside>
   )

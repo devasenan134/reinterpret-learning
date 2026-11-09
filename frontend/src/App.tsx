@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react'
-import { api, ApiError, type Folder, type Mode, type Note, type Status, type Thread, type ThreadStatus } from './api'
+import { api, ApiError, type Folder, type Mode, type Note, type Settings, type Status, type Thread, type ThreadStatus, type Trigger } from './api'
+import Brief from './Brief'
 import Editor from './Editor'
 import Margin from './Margin'
 import ModePicker from './ModePicker'
 import Palette from './Palette'
+import SettingsPanel from './Settings'
 import Sidebar from './Sidebar'
 
 export default function App() {
@@ -16,7 +18,9 @@ export default function App() {
   const [status, setStatus] = useState<Status>('saved')
   const [error, setError] = useState('')
   const [th, setTh] = useState<{ id: number; list: Thread[] }>({ id: 0, list: [] })
-  const [asking, setAsking] = useState<'ask' | 'idle' | null>(null)
+  const [asking, setAsking] = useState<Trigger | null>(null)
+  const [settings, setSettings] = useState<Settings | null>(null)
+  const [showSettings, setShowSettings] = useState(false)
   const [writingOnly, setWritingOnly] = useState(false)
   const threads = th.id === activeId ? th.list : [] // never show another note's margin
 
@@ -27,8 +31,8 @@ export default function App() {
 
   useEffect(() => {
     guard(async () => {
-      const [n, f] = await Promise.all([api.notes(), api.folders()])
-      setNotes(n); setFolders(f); setActiveId(n[0]?.id ?? null)
+      const [n, f, s] = await Promise.all([api.notes(), api.folders(), api.settings()])
+      setSettings(s); setNotes(n); setFolders(f); setActiveId(n[0]?.id ?? null)
     })
   }, [])
 
@@ -41,6 +45,15 @@ export default function App() {
     if (activeId === null) return
     guard(async () => setTh({ id: activeId, list: await api.threads(activeId) }))
   }, [activeId])
+
+  useEffect(() => {
+    if (!settings) return
+    const r = document.documentElement
+    r.dataset.theme = settings.theme
+    r.style.setProperty('--size', settings.text_size + 'px')
+    r.style.setProperty('--ai-font', settings.ai_font === 'sans' ? 'var(--sans)' : 'var(--serif)')
+    r.style.setProperty('--ai-color', settings.ai_color || 'var(--text)')
+  }, [settings])
 
   useEffect(() => {
     const k = (e: KeyboardEvent) => {
@@ -56,7 +69,7 @@ export default function App() {
     setNotes((l) => [n, ...l]); setNote(n); setActiveId(n.id); setPalette(false)
   })
 
-  const ask = async (selection?: string, trigger: 'ask' | 'idle' = 'ask') => {
+  const ask = async (selection?: string, trigger: Trigger = 'ask') => {
     if (activeId === null || asking) return
     const id = activeId
     setAsking(trigger)
@@ -65,7 +78,7 @@ export default function App() {
       const t = await api.ask(id, selection, trigger)
       if (t) setTh((s) => (s.id === id ? { id, list: [...s.list, t] } : s))
     } catch (e) {
-      if (trigger === 'ask') setError(errMsg(e)) // background (idle) failures stay silent
+      if (trigger !== 'idle') setError(errMsg(e)) // background (idle) failures stay silent
     } finally {
       setAsking(null)
     }
@@ -93,6 +106,13 @@ export default function App() {
     setNote((p) => p && { ...p, mode: n.mode })
   })
 
+  const setBrief = (instructions: string) => note && guard(async () => {
+    const n = await api.patchNote(note.id, { instructions })
+    setNote((p) => p && { ...p, instructions: n.instructions })
+  })
+
+  const changeSettings = (p: Partial<Settings>) => guard(async () => setSettings(await api.patchSettings(p)))
+
   const mode: Mode = note?.mode ?? 'reads_along'
 
   return (
@@ -104,6 +124,7 @@ export default function App() {
       {open && (
         <Sidebar
           notes={notes} folders={folders} activeId={activeId} status={status}
+          onSettings={() => setShowSettings(true)}
           writingOnly={writingOnly} onWritingOnly={() => setWritingOnly((v) => !v)}
           onOpen={setActiveId}
           onNew={(f) => newNote('', f ?? null)}
@@ -137,10 +158,10 @@ export default function App() {
         />
       )}
       <main className="page">
-        {!writingOnly && <Margin threads={threads} thinking={asking === 'ask'} onReply={reply} onStatus={changeThread} />}
+        {!writingOnly && <Margin threads={threads} thinking={asking !== null && asking !== 'idle'} onReply={reply} onStatus={changeThread} />}
         <div className="col">
           {note && note.id === activeId && (
-            <div className="bar"><ModePicker mode={mode} onChange={setMode} /></div>
+            <div className="bar"><ModePicker mode={mode} onChange={setMode} /> <Brief key={note.id} value={note.instructions ?? ''} onSave={setBrief} /></div>
           )}
           {note && note.id === activeId ? (
             <Editor
@@ -148,6 +169,7 @@ export default function App() {
               note={note}
               busy={asking !== null}
               idle={mode === 'reads_along' && !writingOnly}
+              pace={Number(settings?.reading_pace ?? 3)}
               onAsk={ask}
               onStatus={setStatus}
               onSaved={(n) => setNotes((l) => l.map((x) => (x.id === n.id ? { ...x, title: n.title, updated_at: n.updated_at } : x)))}
@@ -157,6 +179,7 @@ export default function App() {
           )}
         </div>
       </main>
+      {showSettings && settings && <SettingsPanel s={settings} onChange={changeSettings} onClose={() => setShowSettings(false)} />}
       {palette && <Palette notes={notes} onOpen={(id) => { setActiveId(id); setPalette(false) }} onStart={(t) => newNote(t)} onClose={() => setPalette(false)} />}
       {error && <div className="toast" onClick={() => setError('')}>{error}</div>}
     </div>

@@ -12,9 +12,9 @@ A self-hosted notebook where an AI reads what you write, questions it, explains 
 | 4 | Margin threads: reply, Resolve, Reopen, Dismiss | 3 ✅ |
 | 5 | Mode per note: **Reads along** (comments after a pause) or **On request** (silent until asked) | 3 ✅ |
 | 6 | Writing only (⌘⇧.): hide the margin | 3 ✅ |
-| 7 | **Note brief**: a short text saying what the note is for or how the AI should act, with a few starter presets | 4 |
-| 8 | Explain a selection | 4 |
-| 9 | Settings: default mode, reading pace, where questions appear, light/dark, text size, AI font and colour | 4 |
+| 7 | **Note brief**: a short text saying what the note is for or how the AI should act, with a few starter presets | 4 ✅ |
+| 8 | Explain a selection | 4 ✅ |
+| 9 | Settings: default mode, reading pace, light/dark, text size, AI font and colour (not done: where questions appear, waits on margin placement) | 4 ✅ |
 | 10 | Step-by-step diagrams drawn in ink, step counter, enlarged view | 5 |
 | 11 | **Lenses**: reviewer personas you create (name, description, how it thinks, voice, how often it speaks). A note picks one | 6 |
 | 12 | Chat panel about the current note, with suggested questions | 7 |
@@ -37,8 +37,8 @@ LLM adapter with two providers: Anthropic, and OpenAI-compatible (OpenAI, Ollama
 
 ## Milestones
 
-0. Skeleton ✅  1. Notes, folders, editor ✅  2. LLM adapter and Question this ✅  3. Replies, modes, Writing only ✅
-4. Note brief, explain, settings  5. Diagrams  6. Lenses  7. Chat, voice, export, polish
+0. Skeleton ✅  1. Notes, folders, editor ✅  2. LLM adapter and Question this ✅  3. Replies, modes, Writing only ✅  4. Note brief, explain, settings ✅
+5. Diagrams  6. Lenses  7. Chat, voice, export, polish
 
 ## Open
 

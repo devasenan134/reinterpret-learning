@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import Diagram from './Diagram'
 import type { Thread, ThreadStatus } from './api'
 
 type Props = {
@@ -21,7 +22,9 @@ function Card({ t, onReply, onStatus }: { t: Thread; onReply: Props['onReply']; 
   return (
     <div className={'thread' + (t.status === 'resolved' ? ' resolved' : '')}>
       {t.anchor_quote && <q>{t.anchor_quote}</q>}
-      {t.messages.map((m) => (
+      {t.messages.map((m) => m.svg ? (
+        <Diagram key={m.id} svg={m.svg} captions={m.text.split('\n')} />
+      ) : (
         <p key={m.id} className={m.role === 'user' ? 'mine' : ''}>{m.text}</p>
       ))}
       {t.status === 'open' && (

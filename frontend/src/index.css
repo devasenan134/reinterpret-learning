@@ -124,3 +124,12 @@ kbd { font: 12px var(--sans); color: var(--muted); }
 .srow button { padding: 3px 10px; border-radius: 8px; color: var(--muted); }
 .srow button:hover { background: var(--hover); }
 .srow button.on { background: var(--btn); color: var(--on); }
+
+.diagram { margin: 4px 0 12px; color: var(--ai-color, var(--text)); }
+.diagram svg { width: 100%; height: auto; max-height: 340px; font: 14px var(--sans); }
+.diagram.big svg { max-height: 60vh; }
+.diagram .caption { margin: 6px 0; }
+.stepper { display: flex; align-items: center; gap: 10px; font: 13px var(--sans); color: var(--muted); }
+.stepper button { padding: 0 8px; }
+.stepper button:disabled { opacity: .3; cursor: default; }
+.stepper .enlarge { margin-left: auto; }

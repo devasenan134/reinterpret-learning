@@ -333,3 +333,33 @@ def test_settings_defaults_patch_and_default_mode(client):
     assert s["theme"] == "light" and s["default_mode"] == "on_request" and s["text_size"] == "16"
     assert client.patch("/api/settings", json={"theme": "pink"}).status_code == 422
     assert client.post("/api/notes", json={}).json()["mode"] == "on_request"  # new notes follow the setting
+
+
+# ---- milestone 5: diagrams ----
+
+def test_diagram_is_built_by_the_server_and_escaped(client):
+    nid = note_with(client, "Light hits a leaf.")
+    use(Fake('{"steps": [{"label": "<script>x</script>", "caption": "Light\\narrives"}, {"label": "Leaf", "caption": "It absorbs it."}]}'))
+    t = client.post(f"/api/notes/{nid}/ask", json={"trigger": "diagram", "selection": "Light hits a leaf."}).json()
+    m = t["messages"][0]
+    assert m["kind"] == "diagram" and m["svg"].count('<g class="step">') == 2
+    assert "<script" not in m["svg"] and "&lt;script&gt;" in m["svg"]
+    assert m["text"].split("\n") == ["Light arrives", "It absorbs it."]  # one caption per step
+
+
+def test_diagram_needs_selection_and_readable_reply(client):
+    nid = note_with(client, "Leaf.")
+    use(Fake("not json"))
+    assert client.post(f"/api/notes/{nid}/ask", json={"trigger": "diagram"}).status_code == 400
+    assert client.post(f"/api/notes/{nid}/ask", json={"trigger": "diagram", "selection": "Leaf."}).status_code == 502
+    use(Fake('{"steps": [{"label": "only one"}]}'))  # a diagram needs at least two steps
+    assert client.post(f"/api/notes/{nid}/ask", json={"trigger": "diagram", "selection": "Leaf."}).status_code == 502
+    assert client.get(f"/api/notes/{nid}/threads").json() == []
+
+
+def test_diagram_caps_steps_at_six(client):
+    nid = note_with(client, "x")
+    steps = ",".join('{"label": "s%d", "caption": "c"}' % i for i in range(9))
+    use(Fake('{"steps": [%s]}' % steps))
+    m = client.post(f"/api/notes/{nid}/ask", json={"trigger": "diagram", "selection": "x"}).json()["messages"][0]
+    assert m["svg"].count('<g class="step">') == 6

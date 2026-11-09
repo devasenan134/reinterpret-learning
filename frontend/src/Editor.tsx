@@ -81,10 +81,10 @@ export default function Editor({ note, busy, idle, pace, onStatus, onSaved, onAs
     const { from, to } = editor.state.selection
     onAsk(from === to ? undefined : editor.state.doc.textBetween(from, to, ' '))
   }
-  const explain = async () => {
+  const fromSelection = async (trigger: Trigger) => {
     if (!editor || busy || !(await flush())) return
     const { from, to } = editor.state.selection
-    if (from !== to) onAsk(editor.state.doc.textBetween(from, to, ' '), 'explain')
+    if (from !== to) onAsk(editor.state.doc.textBetween(from, to, ' '), trigger)
   }
   // "Reads along": after a pause, if the text changed since last time, let it speak up (it may stay quiet)
   const onIdle = async () => {
@@ -147,8 +147,11 @@ export default function Editor({ note, busy, idle, pace, onStatus, onSaved, onAs
             <button className="question" disabled={busy} onMouseDown={(e) => { e.preventDefault(); void question() }}>
               Question this <kbd>⌘↵</kbd>
             </button>
-            <button className="question" disabled={busy} onMouseDown={(e) => { e.preventDefault(); void explain() }}>
+            <button className="question" disabled={busy} onMouseDown={(e) => { e.preventDefault(); void fromSelection('explain') }}>
               Explain this
+            </button>
+            <button className="question" disabled={busy} onMouseDown={(e) => { e.preventDefault(); void fromSelection('diagram') }}>
+              Draw this
             </button>
           </div>
         </BubbleMenu>

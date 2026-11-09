@@ -5,6 +5,7 @@ from fastapi import Depends, FastAPI, HTTPException, Response
 from pydantic import BaseModel, Field
 
 from .db import connect, seed
+from .diagram import draw
 from .llm import LLMError, get_provider
 from .respond import ask, explain, note_text
 from .respond import reply as llm_reply
@@ -190,7 +191,7 @@ def list_threads(note_id: int, db=Depends(get_db)):
 
 class AskIn(BaseModel):
     selection: Optional[str] = None
-    trigger: Literal["ask", "idle", "explain"] = "ask"
+    trigger: Literal["ask", "idle", "explain", "diagram"] = "ask"
 
 
 def get_llm():
@@ -208,15 +209,18 @@ def ask_note(note_id: int, body: AskIn, db=Depends(get_db), llm=Depends(get_llm)
         raise HTTPException(409, "This note is set to On request.")
     text = note_text(note["body_json"])
     selection = (body.selection or "").strip() or None
-    if body.trigger == "explain":
+    if body.trigger in ("explain", "diagram"):
         if not selection:
-            raise HTTPException(400, "Select some text to explain.")
+            raise HTTPException(400, f"Select some text to {'explain' if body.trigger == 'explain' else 'draw'}.")
         try:
-            out = explain(llm, note["title"], text, selection, note["instructions"])
+            if body.trigger == "explain":
+                out, kind, svg = explain(llm, note["title"], text, selection, note["instructions"]), "explanation", None
+            else:
+                (out, svg), kind = draw(llm, note["title"], text, selection, note["instructions"]), "diagram"
         except LLMError as e:
             raise HTTPException(502, str(e))
         cur = db.execute("INSERT INTO threads (note_id, anchor_quote) VALUES (?, ?)", (note_id, selection))
-        db.execute("INSERT INTO messages (thread_id, role, kind, text) VALUES (?, 'ai', 'explanation', ?)", (cur.lastrowid, out))
+        db.execute("INSERT INTO messages (thread_id, role, kind, text, svg) VALUES (?, 'ai', ?, ?, ?)", (cur.lastrowid, kind, out, svg))
         db.commit()
         return _thread(db, cur.lastrowid)
     if not text and not selection:

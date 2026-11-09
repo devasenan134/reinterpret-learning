@@ -1,14 +1,14 @@
 export type Mode = 'reads_along' | 'on_request'
 export type Note = { id: number; title: string; folder_id: number | null; updated_at: string; body_json?: string; mode?: Mode; instructions?: string }
 export type Folder = { id: number; name: string }
-export type Message = { id: number; role: string; kind: string; text: string }
+export type Message = { id: number; role: string; kind: string; text: string; svg: string | null }
 export type ThreadStatus = 'open' | 'resolved' | 'dismissed'
 export type Thread = { id: number; anchor_quote: string; status: ThreadStatus; messages: Message[] }
 export class ApiError extends Error {
   detail?: string
 }
 export type Settings = { default_mode: Mode; reading_pace: string; theme: 'dark' | 'light'; text_size: string; ai_font: 'serif' | 'sans'; ai_color: string }
-export type Trigger = 'ask' | 'idle' | 'explain'
+export type Trigger = 'ask' | 'idle' | 'explain' | 'diagram'
 export type Status = 'saved' | 'saving' | 'error'
 
 async function send(method: string, url: string, body?: unknown) {

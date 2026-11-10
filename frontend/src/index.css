@@ -133,3 +133,9 @@ kbd { font: 12px var(--sans); color: var(--muted); }
 .stepper button { padding: 0 8px; }
 .stepper button:disabled { opacity: .3; cursor: default; }
 .stepper .enlarge { margin-left: auto; }
+
+.lens-form label { display: block; margin: 12px 0; font-size: 14px; }
+.lens-form input, .lens-form textarea, .lens-form select { display: block; width: 100%; margin-top: 4px; padding: 8px; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 8px; font: inherit; }
+.lens-form textarea { resize: vertical; }
+.lens-form :focus-visible { outline: 2px solid var(--muted); outline-offset: 2px; }
+.lens-form { max-height: 82vh; overflow-y: auto; }

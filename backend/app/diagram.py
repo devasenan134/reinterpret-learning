@@ -55,10 +55,10 @@ def build_svg(steps: list[Step]) -> str:
     return f'<svg viewBox="0 0 {W} {h}" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="1.5">{"".join(out)}</svg>'
 
 
-def draw(provider: Provider, title: str, text: str, selection: str, brief: str = "") -> tuple[str, str]:
+def draw(provider: Provider, title: str, text: str, selection: str, brief: str = "", lens: dict | None = None) -> tuple[str, str]:
     """Returns (captions joined by newlines, svg)."""
     content = f"Note title: {title or 'Untitled'}\n\nNote:\n{text}\n\nDraw this part:\n{selection}"
-    plan = parse_plan(provider.complete(with_brief(DIAGRAM, brief), [{"role": "user", "content": content}]))
+    plan = parse_plan(provider.complete(with_brief(DIAGRAM, brief, lens), [{"role": "user", "content": content}]))
     if not plan:
         raise LLMError("The model's diagram could not be read. Try again.")
     return "\n".join(s.caption for s in plan.steps), build_svg(plan.steps)

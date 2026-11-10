@@ -47,7 +47,9 @@ Explain what it means in plain words, in two to four short sentences. Add one ex
 Plain text, no JSON, no headings."""
 
 
-def with_brief(system: str, brief: str) -> str:
+def with_brief(system: str, brief: str, lens: dict | None = None) -> str:
+    if lens:
+        system += f"\n\nReviewer: {lens['name']}. {lens['description']}\nThink: {lens['how_it_thinks']}\nVoice: {lens['voice']}. Keep the task and output format above."
     return system + (f"\n\nThe user's brief for this note, follow it:\n{brief.strip()}" if brief.strip() else "")
 
 
@@ -90,17 +92,20 @@ def parse_reply(raw: str) -> Optional[Reply]:
     return r
 
 
-def ask(provider: Provider, title: str, text: str, selection: Optional[str], idle: bool = False, raised: tuple = (), brief: str = "") -> Optional[Reply]:
+def ask(provider: Provider, title: str, text: str, selection: Optional[str], idle: bool = False, raised: tuple = (), brief: str = "", lens: dict | None = None) -> Optional[Reply]:
     """None means stay quiet (only allowed when idle)."""
-    # shortcut: an extra model call on every idle pause, drop it if the model is strong enough to stay silent itself
-    if idle and not provider.complete(GATE, [{"role": "user", "content": text}]).strip().upper().startswith("YES"):
-        return None
+    # shortcut: an extra gate call unless frequency is often, drop it when the model can stay silent itself
+    frequency = lens["frequency"] if lens else "when_it_matters"
+    if idle and frequency != "often":
+        gate = "Reply YES only for a factual error in the note; otherwise NO. Exactly one word." if frequency == "rarely" else GATE
+        if not provider.complete(with_brief(gate, brief, lens), [{"role": "user", "content": text}]).strip().upper().startswith("YES"):
+            return None
     content = f"Note title: {title or 'Untitled'}\n\nNote:\n{text}"
     if selection:
         content += f"\n\nThe user selected this part and wants your question on it:\n{selection}"
     if raised:
         content += "\n\nAlready raised, do not repeat:\n" + "\n".join(f"- {q}" for q in raised if q)
-    reply = parse_reply(provider.complete(with_brief(SYSTEM + (IDLE if idle else ""), brief), [{"role": "user", "content": content}]))
+    reply = parse_reply(provider.complete(with_brief(SYSTEM + (IDLE if idle else ""), brief, lens), [{"role": "user", "content": content}]))
     if not reply:
         raise LLMError("The model's reply could not be read. Try again.")
     if not reply.text.strip():
@@ -116,21 +121,21 @@ def ask(provider: Provider, title: str, text: str, selection: Optional[str], idl
     return reply
 
 
-def explain(provider: Provider, title: str, text: str, selection: str, brief: str = "") -> str:
-    out = provider.complete(with_brief(EXPLAIN, brief), [{"role": "user", "content": f"Note title: {title or 'Untitled'}\n\nNote:\n{text}\n\nExplain this part:\n{selection}"}]).strip()
+def explain(provider: Provider, title: str, text: str, selection: str, brief: str = "", lens: dict | None = None) -> str:
+    out = provider.complete(with_brief(EXPLAIN, brief, lens), [{"role": "user", "content": f"Note title: {title or 'Untitled'}\n\nNote:\n{text}\n\nExplain this part:\n{selection}"}]).strip()
     if not out:
         raise LLMError("The model returned no text.")
     return out
 
 
-def reply(provider: Provider, title: str, text: str, quote: str, messages: list[dict], brief: str = "") -> str:
+def reply(provider: Provider, title: str, text: str, quote: str, messages: list[dict], brief: str = "", lens: dict | None = None) -> str:
     """Continue a margin thread. messages are {role: ai|user, text}, ending with the user's new reply."""
     first = f"Note title: {title or 'Untitled'}\n\nNote:\n{text}"
     if quote:
         first += f"\n\nYour margin note was about: {quote}"
     turns = [{"role": "user", "content": first}]
     turns += [{"role": "assistant" if m["role"] == "ai" else "user", "content": m["text"]} for m in messages]
-    out = provider.complete(with_brief(REPLY_SYSTEM, brief), turns).strip()
+    out = provider.complete(with_brief(REPLY_SYSTEM, brief, lens), turns).strip()
     if not out:
         raise LLMError("The model returned no text.")
     return out

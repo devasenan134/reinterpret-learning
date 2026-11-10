@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api, ApiError, type Folder, type Mode, type Note, type Settings, type Status, type Thread, type ThreadStatus, type Trigger } from './api'
 import Brief from './Brief'
+import Lenses from './Lenses'
 import Editor from './Editor'
 import Margin from './Margin'
 import ModePicker from './ModePicker'
@@ -161,7 +162,10 @@ export default function App() {
         {!writingOnly && <Margin threads={threads} thinking={asking !== null && asking !== 'idle'} onReply={reply} onStatus={changeThread} />}
         <div className="col">
           {note && note.id === activeId && (
-            <div className="bar"><ModePicker mode={mode} onChange={setMode} /> <Brief key={note.id} value={note.instructions ?? ''} onSave={setBrief} /></div>
+            <div className="bar"><ModePicker mode={mode} onChange={setMode} /> <Lenses key={'lens-' + note.id} value={note.lens_id} onChange={async (lens_id) => {
+              const n = await api.patchNote(note.id, { lens_id })
+              setNote((p) => p?.id === n.id ? { ...p, lens_id: n.lens_id } : p)
+            }} /> <Brief key={note.id} value={note.instructions ?? ''} onSave={setBrief} /></div>
           )}
           {note && note.id === activeId ? (
             <Editor

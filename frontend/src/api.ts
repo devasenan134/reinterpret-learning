@@ -1,5 +1,6 @@
 export type Mode = 'reads_along' | 'on_request'
-export type Note = { id: number; title: string; folder_id: number | null; updated_at: string; body_json?: string; mode?: Mode; instructions?: string }
+export type Note = { id: number; title: string; folder_id: number | null; lens_id: number | null; updated_at: string; body_json?: string; mode?: Mode; instructions?: string }
+export type Lens = { id: number; name: string; description: string; how_it_thinks: string; voice: 'plain' | 'warm' | 'blunt' | 'playful'; frequency: 'rarely' | 'when_it_matters' | 'often' }
 export type Folder = { id: number; name: string }
 export type Message = { id: number; role: string; kind: string; text: string; svg: string | null }
 export type ThreadStatus = 'open' | 'resolved' | 'dismissed'
@@ -27,10 +28,13 @@ async function send(method: string, url: string, body?: unknown) {
 }
 
 export const api = {
+  lenses: (): Promise<Lens[]> => send('GET', '/api/lenses'),
+  saveLens: (id: number | null, lens: Omit<Lens, 'id'>): Promise<Lens> => send(id === null ? 'POST' : 'PUT', id === null ? '/api/lenses' : `/api/lenses/${id}`, lens),
+  deleteLens: (id: number) => send('DELETE', `/api/lenses/${id}`),
   notes: (): Promise<Note[]> => send('GET', '/api/notes'),
   note: (id: number): Promise<Note> => send('GET', `/api/notes/${id}`),
   newNote: (title = '', folder_id: number | null = null): Promise<Note> => send('POST', '/api/notes', { title, folder_id }),
-  patchNote: (id: number, p: Partial<Pick<Note, 'title' | 'body_json' | 'folder_id' | 'mode' | 'instructions'>>): Promise<Note> => send('PATCH', `/api/notes/${id}`, p),
+  patchNote: (id: number, p: Partial<Pick<Note, 'title' | 'body_json' | 'folder_id' | 'mode' | 'instructions' | 'lens_id'>>): Promise<Note> => send('PATCH', `/api/notes/${id}`, p),
   deleteNote: (id: number) => send('DELETE', `/api/notes/${id}`),
   threads: (id: number): Promise<Thread[]> => send('GET', `/api/notes/${id}/threads`),
   // null = the model chose to stay quiet (idle only)

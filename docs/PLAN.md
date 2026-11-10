@@ -16,7 +16,7 @@ A self-hosted notebook where an AI reads what you write, questions it, explains 
 | 8 | Explain a selection | 4 ✅ |
 | 9 | Settings: default mode, reading pace, light/dark, text size, AI font and colour (not done: where questions appear, waits on margin placement) | 4 ✅ |
 | 10 | Step-by-step diagrams ("Draw this" on a selection), step counter, enlarged view | 5 ✅ |
-| 11 | **Lenses**: reviewer personas you create (name, description, how it thinks, voice, how often it speaks). A note picks one | 6 |
+| 11 | **Lenses**: reviewer personas you create (name, description, how it thinks, voice, how often it speaks). A note picks one | 6 ✅ |
 | 12 | Chat panel about the current note, with suggested questions | 7 |
 | 13 | Voice input (hold ⌥), export to PDF / Word / Markdown, copy note, share | 7 |
 
@@ -32,13 +32,14 @@ LLM adapter with two providers: Anthropic, and OpenAI-compatible (OpenAI, Ollama
 - The model returns JSON (`anchor_quote`, `text`). The server validates it and drops anything unreadable.
 - "On request" is enforced on the server, not only in the UI.
 - Small models cannot be told to stay silent. For idle replies a yes/no gate call decides first, and a check in code drops repeats of a point already raised.
+- Lens frequency affects idle replies only: rarely checks for factual errors, when it matters uses the usual gate, often skips the gate. Repeated points are still dropped.
 - Diagrams: the model returns only steps (label, caption) as JSON. The server draws the SVG itself, one group per step, with all text escaped. The model never writes SVG.
 - Prompt rules that always apply: question rather than answer, but state a plain factual correction; never rewrite the user's text; keep it short.
 
 ## Milestones
 
 0. Skeleton ✅  1. Notes, folders, editor ✅  2. LLM adapter and Question this ✅  3. Replies, modes, Writing only ✅  4. Note brief, explain, settings ✅  5. Diagrams ✅
-6. Lenses  7. Chat, voice, export, polish
+6. Lenses ✅  7. Chat, voice, export, polish
 
 ## Open
 

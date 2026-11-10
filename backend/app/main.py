@@ -67,9 +67,59 @@ def patch_settings(body: SettingsPatch, db=Depends(get_db)):
     return _settings(db)
 
 
+# ---- lenses ----
+
+class LensIn(BaseModel):
+    name: str = Field(min_length=1, max_length=80, pattern=r"\S")
+    description: str = Field("", max_length=240)
+    how_it_thinks: str = Field("", max_length=500)
+    voice: Literal["plain", "warm", "blunt", "playful"] = "plain"
+    frequency: Literal["rarely", "when_it_matters", "often"] = "when_it_matters"
+
+
+def _lens(db, lens_id: int):
+    row = db.execute("SELECT * FROM lenses WHERE id = ?", (lens_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "lens not found")
+    return dict(row)
+
+
+@app.get("/api/lenses")
+def list_lenses(db=Depends(get_db)):
+    return [dict(r) for r in db.execute("SELECT * FROM lenses ORDER BY name, id")]
+
+
+@app.get("/api/lenses/{lens_id}")
+def get_lens(lens_id: int, db=Depends(get_db)):
+    return _lens(db, lens_id)
+
+
+@app.post("/api/lenses", status_code=201)
+def create_lens(body: LensIn, db=Depends(get_db)):
+    cur = db.execute("INSERT INTO lenses (name, description, how_it_thinks, voice, frequency) VALUES (?, ?, ?, ?, ?)", tuple(body.model_dump().values()))
+    db.commit()
+    return _lens(db, cur.lastrowid)
+
+
+@app.put("/api/lenses/{lens_id}")
+def update_lens(lens_id: int, body: LensIn, db=Depends(get_db)):
+    _lens(db, lens_id)
+    db.execute("UPDATE lenses SET name = ?, description = ?, how_it_thinks = ?, voice = ?, frequency = ? WHERE id = ?", (*body.model_dump().values(), lens_id))
+    db.commit()
+    return _lens(db, lens_id)
+
+
+@app.delete("/api/lenses/{lens_id}", status_code=204)
+def delete_lens(lens_id: int, db=Depends(get_db)):
+    _lens(db, lens_id)
+    db.execute("DELETE FROM lenses WHERE id = ?", (lens_id,))
+    db.commit()
+
+
 # ---- notes ----
 
 class NotePatch(BaseModel):
+    lens_id: Optional[int] = None
     title: Optional[str] = None
     body_json: Optional[str] = None
     folder_id: Optional[int] = None
@@ -112,8 +162,10 @@ def get_note(note_id: int, db=Depends(get_db)):
 @app.patch("/api/notes/{note_id}")
 def patch_note(note_id: int, body: NotePatch, db=Depends(get_db)):
     _note(db, note_id)
-    # only folder_id may be set to null; a null title/body/mode would break a NOT NULL column
-    fields = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None or k == "folder_id"}
+    # A null title/body/mode would break a NOT NULL column.
+    fields = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None or k in ("folder_id", "lens_id")}
+    if fields.get("lens_id") is not None:
+        _lens(db, fields["lens_id"])
     if fields:
         cols = ", ".join(f"{k} = ?" for k in fields)  # keys come from the model, not the client
         db.execute(
@@ -204,6 +256,7 @@ def get_llm():
 @app.post("/api/notes/{note_id}/ask", status_code=201)
 def ask_note(note_id: int, body: AskIn, db=Depends(get_db), llm=Depends(get_llm)):
     note = _note(db, note_id)
+    lens = _lens(db, note["lens_id"]) if note["lens_id"] is not None else None
     idle = body.trigger == "idle"
     if idle and note["mode"] == "on_request":  # enforced here, not only in the UI
         raise HTTPException(409, "This note is set to On request.")
@@ -214,12 +267,12 @@ def ask_note(note_id: int, body: AskIn, db=Depends(get_db), llm=Depends(get_llm)
             raise HTTPException(400, f"Select some text to {'explain' if body.trigger == 'explain' else 'draw'}.")
         try:
             if body.trigger == "explain":
-                out, kind, svg = explain(llm, note["title"], text, selection, note["instructions"]), "explanation", None
+                out, kind, svg = explain(llm, note["title"], text, selection, note["instructions"], lens), "explanation", None
             else:
-                (out, svg), kind = draw(llm, note["title"], text, selection, note["instructions"]), "diagram"
+                (out, svg), kind = draw(llm, note["title"], text, selection, note["instructions"], lens), "diagram"
         except LLMError as e:
             raise HTTPException(502, str(e))
-        cur = db.execute("INSERT INTO threads (note_id, anchor_quote) VALUES (?, ?)", (note_id, selection))
+        cur = db.execute("INSERT INTO threads (note_id, anchor_quote, lens_id) VALUES (?, ?, ?)", (note_id, selection, note["lens_id"]))
         db.execute("INSERT INTO messages (thread_id, role, kind, text, svg) VALUES (?, 'ai', ?, ?, ?)", (cur.lastrowid, kind, out, svg))
         db.commit()
         return _thread(db, cur.lastrowid)
@@ -229,12 +282,12 @@ def ask_note(note_id: int, body: AskIn, db=Depends(get_db), llm=Depends(get_llm)
         raise HTTPException(400, "Write something first.")
     raised = tuple(r["anchor_quote"] for r in db.execute("SELECT anchor_quote FROM threads WHERE note_id = ?", (note_id,)))
     try:
-        reply = ask(llm, note["title"], text, selection, idle, raised, note["instructions"])
+        reply = ask(llm, note["title"], text, selection, idle, raised, note["instructions"], lens)
     except LLMError as e:
         raise HTTPException(502, str(e))
     if reply is None:
         return Response(status_code=204)
-    cur = db.execute("INSERT INTO threads (note_id, anchor_quote) VALUES (?, ?)", (note_id, reply.anchor_quote))
+    cur = db.execute("INSERT INTO threads (note_id, anchor_quote, lens_id) VALUES (?, ?, ?)", (note_id, reply.anchor_quote, note["lens_id"]))
     db.execute(
         "INSERT INTO messages (thread_id, role, kind, text) VALUES (?, 'ai', 'question', ?)",
         (cur.lastrowid, reply.text),
@@ -258,8 +311,9 @@ def reply_thread(thread_id: int, body: ReplyIn, db=Depends(get_db), llm=Depends(
     if t["status"] != "open":
         raise HTTPException(409, "This thread is closed. Reopen it to reply.")
     note = _note(db, t["note_id"])
+    lens = _lens(db, note["lens_id"]) if note["lens_id"] is not None else None
     try:
-        answer = llm_reply(llm, note["title"], note_text(note["body_json"]), t["anchor_quote"], [*t["messages"], {"role": "user", "text": text}], note["instructions"])
+        answer = llm_reply(llm, note["title"], note_text(note["body_json"]), t["anchor_quote"], [*t["messages"], {"role": "user", "text": text}], note["instructions"], lens)
     except LLMError as e:
         raise HTTPException(502, str(e))  # nothing saved, so the user can send the same text again
     db.execute("INSERT INTO messages (thread_id, role, kind, text) VALUES (?, 'user', 'text', ?)", (thread_id, text))
